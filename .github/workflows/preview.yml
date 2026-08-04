@@ -361,46 +361,51 @@ jobs:
             artifacts/herdr-macos-aarch64/herdr-macos-aarch64
             artifacts/herdr-windows-x86_64.zip/herdr-windows-x86_64.zip
 
-      - name: Update preview documentation and manifest
-        run: |
-          node website/scripts/docs-preview.mjs snapshot '${{ needs.preflight.outputs.commit }}'
-          python3 scripts/preview.py manifest \
-            --output website/preview.json \
-            --tag '${{ needs.preflight.outputs.tag }}' \
-            --build-id '${{ needs.preflight.outputs.build_id }}' \
-            --commit '${{ needs.preflight.outputs.commit }}' \
-            --built-at '${{ needs.preflight.outputs.built_at }}' \
-            --base-version '${{ needs.preflight.outputs.base_version }}' \
-            --protocol '${{ needs.preflight.outputs.protocol }}' \
-            --notes PREVIEW_NOTES.md \
-            --sha-file preview-sha256.json \
-            --retain 30
-          (cd website && bun install --frozen-lockfile)
-
-      - name: Commit preview publication
-        env:
-          KANGAL_GITHUB_TOKEN: ${{ secrets.KANGAL_GITHUB_TOKEN }}
-        run: |
-          git config user.name "kangal-bot"
-          git config user.email "285672167+kangal-bot@users.noreply.github.com"
-          git add -A docs/preview website/preview.json
-          git diff --cached --quiet || git commit -m "docs: publish preview documentation"
-          remote="https://x-access-token:${KANGAL_GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-          for attempt in 1 2 3; do
-            git pull --rebase "$remote" master
-            node website/scripts/docs-preview.mjs check
-            node website/scripts/docs-versions.mjs check
-            (cd website && bun run build)
-            if git push "$remote" HEAD:master; then
-              exit 0
-            fi
-            if [ "$attempt" -lt 3 ]; then
-              echo "master changed during preview publishing; retrying ($attempt/3)"
-              sleep $((attempt * 2))
-            fi
-          done
-          echo "failed to publish preview documentation after 3 attempts" >&2
-          exit 1
+      # fork-local: the site publication steps below require the canonical
+      # repository's KANGAL_GITHUB_TOKEN secret and push docs/preview and
+      # website/preview.json commits to master. This fork only needs the
+      # prerelease binaries, so they are commented out.
+      #
+      # - name: Update preview documentation and manifest
+      #   run: |
+      #     node website/scripts/docs-preview.mjs snapshot '${{ needs.preflight.outputs.commit }}'
+      #     python3 scripts/preview.py manifest \
+      #       --output website/preview.json \
+      #       --tag '${{ needs.preflight.outputs.tag }}' \
+      #       --build-id '${{ needs.preflight.outputs.build_id }}' \
+      #       --commit '${{ needs.preflight.outputs.commit }}' \
+      #       --built-at '${{ needs.preflight.outputs.built_at }}' \
+      #       --base-version '${{ needs.preflight.outputs.base_version }}' \
+      #       --protocol '${{ needs.preflight.outputs.protocol }}' \
+      #       --notes PREVIEW_NOTES.md \
+      #       --sha-file preview-sha256.json \
+      #       --retain 30
+      #     (cd website && bun install --frozen-lockfile)
+      #
+      # - name: Commit preview publication
+      #   env:
+      #     KANGAL_GITHUB_TOKEN: ${{ secrets.KANGAL_GITHUB_TOKEN }}
+      #   run: |
+      #     git config user.name "kangal-bot"
+      #     git config user.email "285672167+kangal-bot@users.noreply.github.com"
+      #     git add -A docs/preview website/preview.json
+      #     git diff --cached --quiet || git commit -m "docs: publish preview documentation"
+      #     remote="https://x-access-token:${KANGAL_GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+      #     for attempt in 1 2 3; do
+      #       git pull --rebase "$remote" master
+      #       node website/scripts/docs-preview.mjs check
+      #       node website/scripts/docs-versions.mjs check
+      #       (cd website && bun run build)
+      #       if git push "$remote" HEAD:master; then
+      #         exit 0
+      #       fi
+      #       if [ "$attempt" -lt 3 ]; then
+      #         echo "master changed during preview publishing; retrying ($attempt/3)"
+      #         sleep $((attempt * 2))
+      #       fi
+      #     done
+      #     echo "failed to publish preview documentation after 3 attempts" >&2
+      #     exit 1
 
       - name: Trigger website deploy
         env:
