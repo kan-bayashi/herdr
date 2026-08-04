@@ -315,6 +315,9 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # Dim panes that are not focused while working in a pane.
 # dim_inactive_panes = false
 
+# How strongly unfocused panes dim, from 0.0 (off) to 1.0.
+# dim_inactive_panes_strength = 0.4
+
 # Show detected/reported agent labels in split pane borders when no manual pane name is set.
 # show_agent_labels_on_pane_borders = false
 

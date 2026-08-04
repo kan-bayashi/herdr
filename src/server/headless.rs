@@ -225,6 +225,7 @@ fn dim_dirty_patch(
     patch: &mut crate::pane::TerminalDirtyPatch,
     target: Option<(u8, u8, u8)>,
     host_theme: &crate::terminal_theme::TerminalTheme,
+    strength: f32,
 ) {
     use crate::protocol::{color_to_u32, u32_to_color};
     use crate::ui::dim_color_toward;
@@ -236,6 +237,7 @@ fn dim_dirty_patch(
             ratatui::style::Color::Rgb(fg.r, fg.g, fg.b),
             target,
             host_theme,
+            strength,
         )
     });
     for (_, row_cells) in &mut patch.rows {
@@ -244,12 +246,14 @@ fn dim_dirty_patch(
                 cell.modifier |= dim;
                 continue;
             };
-            match dim_color_toward(u32_to_color(cell.fg), target, host_theme).or(dimmed_default_fg)
+            match dim_color_toward(u32_to_color(cell.fg), target, host_theme, strength)
+                .or(dimmed_default_fg)
             {
                 Some(fg) => cell.fg = color_to_u32(fg),
                 None => cell.modifier |= dim,
             }
-            if let Some(bg) = dim_color_toward(u32_to_color(cell.bg), target, host_theme) {
+            if let Some(bg) = dim_color_toward(u32_to_color(cell.bg), target, host_theme, strength)
+            {
                 cell.bg = color_to_u32(bg);
             }
         }
@@ -3964,6 +3968,7 @@ impl HeadlessServer {
                             &mut patch,
                             dim_target,
                             &self.app.state.host_terminal_theme,
+                            self.app.state.dim_inactive_panes_strength,
                         );
                     }
                     if !apply_terminal_dirty_patch(&mut frame, info.inner_rect, patch) {
@@ -5015,6 +5020,7 @@ mod tests {
             &mut patch,
             Some((0, 0, 0)),
             &crate::terminal_theme::TerminalTheme::default(),
+            0.4,
         );
 
         let cell = &patch.rows[0].1[0];
@@ -5047,6 +5053,7 @@ mod tests {
             &mut patch,
             Some((0, 0, 0)),
             &crate::terminal_theme::TerminalTheme::default(),
+            0.4,
         );
         let dim = ratatui::style::Modifier::DIM.bits();
         for (_, row_cells) in &patch.rows {
@@ -5064,6 +5071,7 @@ mod tests {
             &mut patch,
             None,
             &crate::terminal_theme::TerminalTheme::default(),
+            0.4,
         );
         assert_eq!(patch.rows[0].1[0].modifier & dim, dim);
     }

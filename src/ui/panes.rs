@@ -345,6 +345,7 @@ pub(super) fn render_panes(
                             cell.style(),
                             blend_target,
                             &app.host_terminal_theme,
+                            app.dim_inactive_panes_strength,
                         ));
                     }
                 }
@@ -933,8 +934,6 @@ fn color_to_rgb(color: Color) -> Option<Rgb> {
     }
 }
 
-const INACTIVE_PANE_DIM_BLEND: f32 = 0.4;
-
 /// Resolve the color that dimmed inactive-pane cells fade toward: the host
 /// terminal's detected background, falling back to theme surfaces.
 pub(crate) fn inactive_dim_target(
@@ -1042,6 +1041,7 @@ pub(crate) fn dim_color_toward(
     color: Color,
     target: (u8, u8, u8),
     host_theme: &crate::terminal_theme::TerminalTheme,
+    strength: f32,
 ) -> Option<Color> {
     let rgb = dim_color_to_rgb(color, host_theme)?;
     let toward = if relative_luminance(target) < 0.5 {
@@ -1049,7 +1049,7 @@ pub(crate) fn dim_color_toward(
     } else {
         (255, 255, 255)
     };
-    let (r, g, b) = mix_rgb(rgb, toward, INACTIVE_PANE_DIM_BLEND);
+    let (r, g, b) = mix_rgb(rgb, toward, strength);
     Some(Color::Rgb(r, g, b))
 }
 
@@ -1057,6 +1057,7 @@ fn dimmed_inactive_style(
     style: Style,
     target: Option<(u8, u8, u8)>,
     host_theme: &crate::terminal_theme::TerminalTheme,
+    strength: f32,
 ) -> Style {
     let Some(target) = target else {
         return style.add_modifier(Modifier::DIM);
@@ -1064,11 +1065,11 @@ fn dimmed_inactive_style(
     let mut dimmed = style;
     let default_fg = || {
         let fg = host_theme.foreground.map(terminal_theme_to_rgb)?;
-        dim_color_toward(Color::Rgb(fg.0, fg.1, fg.2), target, host_theme)
+        dim_color_toward(Color::Rgb(fg.0, fg.1, fg.2), target, host_theme, strength)
     };
     match style
         .fg
-        .and_then(|fg| dim_color_toward(fg, target, host_theme))
+        .and_then(|fg| dim_color_toward(fg, target, host_theme, strength))
         .or_else(default_fg)
     {
         Some(fg) => dimmed.fg = Some(fg),
@@ -1076,7 +1077,7 @@ fn dimmed_inactive_style(
     }
     if let Some(bg) = style
         .bg
-        .and_then(|bg| dim_color_toward(bg, target, host_theme))
+        .and_then(|bg| dim_color_toward(bg, target, host_theme, strength))
     {
         dimmed.bg = Some(bg);
     }
@@ -1644,6 +1645,7 @@ mod tests {
             style,
             Some((0, 0, 0)),
             &crate::terminal_theme::TerminalTheme::default(),
+            0.4,
         );
 
         assert_eq!(dimmed.fg, Some(Color::Rgb(120, 60, 30)));
@@ -1659,6 +1661,7 @@ mod tests {
             style,
             Some((0, 0, 0)),
             &crate::terminal_theme::TerminalTheme::default(),
+            0.4,
         );
 
         assert_eq!(dimmed.fg, Some(Color::Reset));
@@ -1678,6 +1681,7 @@ mod tests {
             style,
             Some((0, 0, 0)),
             &crate::terminal_theme::TerminalTheme::default(),
+            0.4,
         );
 
         assert_eq!(dimmed.fg, Some(Color::Rgb(153, 153, 153)));
@@ -1700,7 +1704,7 @@ mod tests {
         );
         let style = Style::default().fg(Color::Blue).bg(Color::Indexed(4));
 
-        let dimmed = dimmed_inactive_style(style, Some((0, 0, 0)), &host_theme);
+        let dimmed = dimmed_inactive_style(style, Some((0, 0, 0)), &host_theme, 0.4);
 
         assert_eq!(dimmed.fg, Some(Color::Rgb(65, 77, 151)));
         assert_eq!(dimmed.bg, Some(Color::Rgb(65, 77, 151)));
@@ -1718,7 +1722,7 @@ mod tests {
         };
         let style = Style::default().fg(Color::Reset).bg(Color::Reset);
 
-        let dimmed = dimmed_inactive_style(style, Some((0, 0, 0)), &host_theme);
+        let dimmed = dimmed_inactive_style(style, Some((0, 0, 0)), &host_theme, 0.4);
 
         assert_eq!(dimmed.fg, Some(Color::Rgb(120, 120, 120)));
         assert_eq!(dimmed.bg, Some(Color::Reset));
@@ -1731,8 +1735,24 @@ mod tests {
             Color::Rgb(100, 50, 25),
             (250, 250, 250),
             &crate::terminal_theme::TerminalTheme::default(),
+            0.4,
         );
         assert_eq!(dimmed, Some(Color::Rgb(162, 132, 117)));
+    }
+
+    #[test]
+    fn dim_color_toward_strength_controls_the_scale() {
+        let theme = crate::terminal_theme::TerminalTheme::default();
+        let color = Color::Rgb(200, 100, 50);
+
+        assert_eq!(
+            dim_color_toward(color, (0, 0, 0), &theme, 0.0),
+            Some(Color::Rgb(200, 100, 50))
+        );
+        assert_eq!(
+            dim_color_toward(color, (0, 0, 0), &theme, 1.0),
+            Some(Color::Rgb(0, 0, 0))
+        );
     }
 
     #[test]
@@ -1743,6 +1763,7 @@ mod tests {
             style,
             None,
             &crate::terminal_theme::TerminalTheme::default(),
+            0.4,
         );
 
         assert_eq!(dimmed.fg, Some(Color::Rgb(10, 20, 30)));
