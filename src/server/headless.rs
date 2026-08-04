@@ -5020,11 +5020,11 @@ mod tests {
         let cell = &patch.rows[0].1[0];
         assert_eq!(
             cell.fg,
-            crate::protocol::color_to_u32(Color::Rgb(100, 50, 25))
+            crate::protocol::color_to_u32(Color::Rgb(120, 60, 30))
         );
         assert_eq!(
             cell.bg,
-            crate::protocol::color_to_u32(Color::Rgb(50, 100, 125))
+            crate::protocol::color_to_u32(Color::Rgb(60, 120, 150))
         );
         let dim = ratatui::style::Modifier::DIM.bits();
         let bold = ratatui::style::Modifier::BOLD.bits();

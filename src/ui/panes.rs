@@ -933,7 +933,7 @@ fn color_to_rgb(color: Color) -> Option<Rgb> {
     }
 }
 
-const INACTIVE_PANE_DIM_BLEND: f32 = 0.5;
+const INACTIVE_PANE_DIM_BLEND: f32 = 0.4;
 
 /// Resolve the color that dimmed inactive-pane cells fade toward: the host
 /// terminal's detected background, falling back to theme surfaces.
@@ -1646,8 +1646,8 @@ mod tests {
             &crate::terminal_theme::TerminalTheme::default(),
         );
 
-        assert_eq!(dimmed.fg, Some(Color::Rgb(100, 50, 25)));
-        assert_eq!(dimmed.bg, Some(Color::Rgb(50, 100, 125)));
+        assert_eq!(dimmed.fg, Some(Color::Rgb(120, 60, 30)));
+        assert_eq!(dimmed.bg, Some(Color::Rgb(60, 120, 150)));
         assert!(!dimmed.add_modifier.contains(Modifier::DIM));
     }
 
@@ -1680,8 +1680,8 @@ mod tests {
             &crate::terminal_theme::TerminalTheme::default(),
         );
 
-        assert_eq!(dimmed.fg, Some(Color::Rgb(128, 128, 128)));
-        assert_eq!(dimmed.bg, Some(Color::Rgb(0, 108, 68)));
+        assert_eq!(dimmed.fg, Some(Color::Rgb(153, 153, 153)));
+        assert_eq!(dimmed.bg, Some(Color::Rgb(0, 129, 81)));
         assert!(!dimmed.add_modifier.contains(Modifier::DIM));
     }
 
@@ -1702,8 +1702,8 @@ mod tests {
 
         let dimmed = dimmed_inactive_style(style, Some((0, 0, 0)), &host_theme);
 
-        assert_eq!(dimmed.fg, Some(Color::Rgb(54, 65, 126)));
-        assert_eq!(dimmed.bg, Some(Color::Rgb(54, 65, 126)));
+        assert_eq!(dimmed.fg, Some(Color::Rgb(65, 77, 151)));
+        assert_eq!(dimmed.bg, Some(Color::Rgb(65, 77, 151)));
     }
 
     #[test]
@@ -1720,7 +1720,7 @@ mod tests {
 
         let dimmed = dimmed_inactive_style(style, Some((0, 0, 0)), &host_theme);
 
-        assert_eq!(dimmed.fg, Some(Color::Rgb(100, 100, 100)));
+        assert_eq!(dimmed.fg, Some(Color::Rgb(120, 120, 120)));
         assert_eq!(dimmed.bg, Some(Color::Reset));
         assert!(!dimmed.add_modifier.contains(Modifier::DIM));
     }
@@ -1732,7 +1732,7 @@ mod tests {
             (250, 250, 250),
             &crate::terminal_theme::TerminalTheme::default(),
         );
-        assert_eq!(dimmed, Some(Color::Rgb(178, 153, 140)));
+        assert_eq!(dimmed, Some(Color::Rgb(162, 132, 117)));
     }
 
     #[test]
