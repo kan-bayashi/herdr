@@ -780,6 +780,17 @@ pub enum TabBarPositionConfig {
     Bottom,
 }
 
+/// Validated tab edge decorations drawn in the tab bar.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TabSeparators {
+    pub left: String,
+    pub right: String,
+}
+
+fn valid_tab_separator(raw: &str) -> bool {
+    !raw.chars().any(char::is_control)
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(default)]
 pub struct UiConfig {
@@ -829,6 +840,12 @@ pub struct UiConfig {
     pub hide_tab_bar_when_single_tab: bool,
     /// Desktop tab row placement. Default: top.
     pub tab_bar_position: TabBarPositionConfig,
+    /// Decoration drawn at the left edge of each tab, colored to match the
+    /// tab. Powerline glyphs like "" work here. Empty disables it. Default: "".
+    pub tab_separator_left: String,
+    /// Decoration drawn at the right edge of each tab, colored to match the
+    /// tab. Powerline glyphs like "" work here. Empty disables it. Default: "".
+    pub tab_separator_right: String,
     /// Agent sidebar ordering. Saved values are "spaces" or "priority". Default: "spaces".
     pub agent_panel_sort: AgentPanelSortConfig,
     /// Expanded sidebar row composition.
@@ -1035,6 +1052,8 @@ impl Default for UiConfig {
             show_agent_labels_on_pane_borders: false,
             hide_tab_bar_when_single_tab: false,
             tab_bar_position: TabBarPositionConfig::Top,
+            tab_separator_left: String::new(),
+            tab_separator_right: String::new(),
             agent_panel_sort: AgentPanelSortConfig::Spaces,
             sidebar: SidebarConfig::default(),
             accent: "cyan".into(),
@@ -1045,6 +1064,26 @@ impl Default for UiConfig {
 }
 
 impl UiConfig {
+    /// Tab edge decorations with invalid values replaced by the empty default.
+    pub(crate) fn tab_separators(&self) -> TabSeparators {
+        let sanitize = |raw: &str| valid_tab_separator(raw).then(|| raw.to_string());
+        TabSeparators {
+            left: sanitize(&self.tab_separator_left).unwrap_or_default(),
+            right: sanitize(&self.tab_separator_right).unwrap_or_default(),
+        }
+    }
+
+    pub(crate) fn tab_separator_diagnostics(&self) -> Vec<String> {
+        [
+            ("ui.tab_separator_left", &self.tab_separator_left),
+            ("ui.tab_separator_right", &self.tab_separator_right),
+        ]
+        .into_iter()
+        .filter(|(_, value)| !valid_tab_separator(value))
+        .map(|(key, _)| format!("{key} must not contain control characters; ignoring it"))
+        .collect()
+    }
+
     pub fn mouse_scroll_lines(&self) -> usize {
         self.mouse_scroll_lines
             .map(NonZeroUsize::get)
@@ -1294,6 +1333,43 @@ tab_bar_position = "bottom"
         assert!(config.ui.show_agent_labels_on_pane_borders);
         assert!(config.ui.hide_tab_bar_when_single_tab);
         assert_eq!(config.ui.tab_bar_position, TabBarPositionConfig::Bottom);
+    }
+
+    #[test]
+    fn tab_separators_default_to_empty_and_parse() {
+        let default_config = Config::default();
+        assert_eq!(default_config.ui.tab_separators(), TabSeparators::default());
+        assert!(default_config.ui.tab_separator_diagnostics().is_empty());
+
+        let config: Config = toml::from_str(
+            "[ui]\ntab_separator_left = \"\u{e0ba}\"\ntab_separator_right = \"\u{e0bc}\"\n",
+        )
+        .unwrap();
+        assert_eq!(
+            config.ui.tab_separators(),
+            TabSeparators {
+                left: "\u{e0ba}".into(),
+                right: "\u{e0bc}".into(),
+            }
+        );
+        assert!(config.ui.tab_separator_diagnostics().is_empty());
+    }
+
+    #[test]
+    fn tab_separators_with_control_characters_are_ignored_with_diagnostics() {
+        let config: Config =
+            toml::from_str("[ui]\ntab_separator_left = \"a\\nb\"\ntab_separator_right = \"|\"\n")
+                .unwrap();
+        assert_eq!(
+            config.ui.tab_separators(),
+            TabSeparators {
+                left: String::new(),
+                right: "|".into(),
+            }
+        );
+        let diagnostics = config.ui.tab_separator_diagnostics();
+        assert_eq!(diagnostics.len(), 1);
+        assert!(diagnostics[0].contains("ui.tab_separator_left"));
     }
 
     #[test]

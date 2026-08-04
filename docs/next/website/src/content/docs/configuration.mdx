@@ -258,6 +258,8 @@ The sidebar is the main Herdr dashboard. Search `ui.` in the [Config reference](
 
 Set `tab_bar_position = "bottom"` under `[ui]` to place the desktop tab row below the terminal panes. Prefix, Navigate, Copy, and Resize mode bars temporarily replace the bottom tab row while active. The default is `"top"`.
 
+Set `tab_separator_left` and `tab_separator_right` under `[ui]` to draw decorations at the edges of each tab, colored to match the tab. Powerline glyphs work well here, for example `tab_separator_left = ""` and `tab_separator_right = ""`. Both default to empty, which disables them.
+
 ### Sidebar row layouts
 
 The expanded desktop sidebar renders each inner array in `rows` as one line. These are the complete default layouts:
