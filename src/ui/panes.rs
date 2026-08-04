@@ -325,14 +325,28 @@ pub(super) fn render_panes(
             rt.render(frame, info.inner_rect, show_cursor);
             render_pane_scrollbar(app, frame, info, rt);
 
-            let should_dim = !info.is_focused && multi_pane && !terminal_active;
+            let should_dim =
+                !info.is_focused && multi_pane && (!terminal_active || app.dim_inactive_panes);
             if should_dim {
+                // Legacy navigation-mode dim keeps the plain DIM modifier
+                // (blend target None); ui.dim_inactive_panes fades cell
+                // colors toward the pane background so colored backgrounds
+                // dim with the text.
+                let blend_target = app
+                    .dim_inactive_panes
+                    .then(|| inactive_dim_target(&app.palette, app.host_terminal_theme))
+                    .flatten();
                 let inner = info.inner_rect;
                 let buf = frame.buffer_mut();
                 for y in inner.y..inner.y + inner.height {
                     for x in inner.x..inner.x + inner.width {
                         let cell = &mut buf[(x, y)];
-                        cell.set_style(cell.style().add_modifier(Modifier::DIM));
+                        cell.set_style(dimmed_inactive_style(
+                            cell.style(),
+                            blend_target,
+                            &app.host_terminal_theme,
+                            app.dim_inactive_panes_strength,
+                        ));
                     }
                 }
             }
@@ -920,6 +934,156 @@ fn color_to_rgb(color: Color) -> Option<Rgb> {
     }
 }
 
+/// Resolve the color that dimmed inactive-pane cells fade toward: the host
+/// terminal's detected background, falling back to theme surfaces.
+pub(crate) fn inactive_dim_target(
+    p: &Palette,
+    host_theme: crate::terminal_theme::TerminalTheme,
+) -> Option<(u8, u8, u8)> {
+    host_theme
+        .background
+        .map(terminal_theme_to_rgb)
+        .or_else(|| color_to_rgb(p.panel_bg))
+        .or_else(|| color_to_rgb(p.surface_dim))
+}
+
+/// Standard xterm 256-color palette values. Entries 0-15 use the same
+/// approximations as `color_to_rgb`; the host terminal may theme them
+/// differently, but a close match is enough for dimming.
+fn indexed_to_rgb(index: u8) -> Rgb {
+    match index {
+        0 => (0, 0, 0),
+        1 => (128, 0, 0),
+        2 => (0, 128, 0),
+        3 => (128, 128, 0),
+        4 => (0, 0, 128),
+        5 => (128, 0, 128),
+        6 => (0, 128, 128),
+        7 => (192, 192, 192),
+        8 => (128, 128, 128),
+        9 => (255, 0, 0),
+        10 => (0, 255, 0),
+        11 => (255, 255, 0),
+        12 => (0, 0, 255),
+        13 => (255, 0, 255),
+        14 => (0, 255, 255),
+        15 => (255, 255, 255),
+        16..=231 => {
+            let value = |component: u8| {
+                if component == 0 {
+                    0
+                } else {
+                    55 + 40 * component
+                }
+            };
+            let offset = index - 16;
+            (
+                value(offset / 36),
+                value((offset % 36) / 6),
+                value(offset % 6),
+            )
+        }
+        232..=255 => {
+            let gray = 8 + 10 * (index - 232);
+            (gray, gray, gray)
+        }
+    }
+}
+
+fn named_ansi_index(color: Color) -> Option<u8> {
+    match color {
+        Color::Black => Some(0),
+        Color::Red => Some(1),
+        Color::Green => Some(2),
+        Color::Yellow => Some(3),
+        Color::Blue => Some(4),
+        Color::Magenta => Some(5),
+        Color::Cyan => Some(6),
+        Color::Gray => Some(7),
+        Color::DarkGray => Some(8),
+        Color::LightRed => Some(9),
+        Color::LightGreen => Some(10),
+        Color::LightYellow => Some(11),
+        Color::LightBlue => Some(12),
+        Color::LightMagenta => Some(13),
+        Color::LightCyan => Some(14),
+        Color::White => Some(15),
+        _ => None,
+    }
+}
+
+/// Resolve a cell color to RGB for dimming, preferring the host terminal's
+/// reported palette (OSC 4) so dimmed colors keep the on-screen hue, and
+/// falling back to standard xterm values when the host palette is unknown.
+fn dim_color_to_rgb(
+    color: Color,
+    host_theme: &crate::terminal_theme::TerminalTheme,
+) -> Option<Rgb> {
+    let host_palette =
+        |index: u8| host_theme.palette[usize::from(index)].map(terminal_theme_to_rgb);
+    match color {
+        Color::Indexed(index) => Some(host_palette(index).unwrap_or_else(|| indexed_to_rgb(index))),
+        Color::Rgb(r, g, b) => Some((r, g, b)),
+        Color::Reset => None,
+        named => match named_ansi_index(named) {
+            Some(index) => host_palette(index).or_else(|| color_to_rgb(named)),
+            None => color_to_rgb(named),
+        },
+    }
+}
+
+/// Scale a cell color for inactive-pane dimming. Colors move toward black on
+/// dark backgrounds and toward white on light ones, so foreground/background
+/// contrast is preserved instead of washing text into its background.
+/// Returns `None` for colors with no resolvable RGB value (terminal
+/// defaults), which callers must handle with a `Modifier::DIM` fallback.
+pub(crate) fn dim_color_toward(
+    color: Color,
+    target: (u8, u8, u8),
+    host_theme: &crate::terminal_theme::TerminalTheme,
+    strength: f32,
+) -> Option<Color> {
+    let rgb = dim_color_to_rgb(color, host_theme)?;
+    let toward = if relative_luminance(target) < 0.5 {
+        (0, 0, 0)
+    } else {
+        (255, 255, 255)
+    };
+    let (r, g, b) = mix_rgb(rgb, toward, strength);
+    Some(Color::Rgb(r, g, b))
+}
+
+fn dimmed_inactive_style(
+    style: Style,
+    target: Option<(u8, u8, u8)>,
+    host_theme: &crate::terminal_theme::TerminalTheme,
+    strength: f32,
+) -> Style {
+    let Some(target) = target else {
+        return style.add_modifier(Modifier::DIM);
+    };
+    let mut dimmed = style;
+    let default_fg = || {
+        let fg = host_theme.foreground.map(terminal_theme_to_rgb)?;
+        dim_color_toward(Color::Rgb(fg.0, fg.1, fg.2), target, host_theme, strength)
+    };
+    match style
+        .fg
+        .and_then(|fg| dim_color_toward(fg, target, host_theme, strength))
+        .or_else(default_fg)
+    {
+        Some(fg) => dimmed.fg = Some(fg),
+        None => dimmed = dimmed.add_modifier(Modifier::DIM),
+    }
+    if let Some(bg) = style
+        .bg
+        .and_then(|bg| dim_color_toward(bg, target, host_theme, strength))
+    {
+        dimmed.bg = Some(bg);
+    }
+    dimmed
+}
+
 pub(super) fn render_empty(app: &AppState, frame: &mut Frame, area: Rect) {
     let p = &app.palette;
     let lines = vec![
@@ -1469,6 +1633,160 @@ mod tests {
         assert_eq!(second.add_modifier, expected_style.add_modifier);
         assert_eq!(third.add_modifier, expected_style.add_modifier);
         assert!(!second.add_modifier.contains(Modifier::BOLD));
+    }
+
+    #[test]
+    fn dimmed_inactive_style_blends_fg_and_bg_toward_target() {
+        let style = Style::default()
+            .fg(Color::Rgb(200, 100, 50))
+            .bg(Color::Rgb(100, 200, 250));
+
+        let dimmed = dimmed_inactive_style(
+            style,
+            Some((0, 0, 0)),
+            &crate::terminal_theme::TerminalTheme::default(),
+            0.4,
+        );
+
+        assert_eq!(dimmed.fg, Some(Color::Rgb(120, 60, 30)));
+        assert_eq!(dimmed.bg, Some(Color::Rgb(60, 120, 150)));
+        assert!(!dimmed.add_modifier.contains(Modifier::DIM));
+    }
+
+    #[test]
+    fn dimmed_inactive_style_falls_back_to_dim_for_unblendable_fg() {
+        let style = Style::default().fg(Color::Reset).bg(Color::Reset);
+
+        let dimmed = dimmed_inactive_style(
+            style,
+            Some((0, 0, 0)),
+            &crate::terminal_theme::TerminalTheme::default(),
+            0.4,
+        );
+
+        assert_eq!(dimmed.fg, Some(Color::Reset));
+        assert_eq!(dimmed.bg, Some(Color::Reset));
+        assert!(dimmed.add_modifier.contains(Modifier::DIM));
+    }
+
+    #[test]
+    fn dimmed_inactive_style_resolves_indexed_palette_colors() {
+        // Indexed(42) = color-cube entry (0, 215, 135); zsh %K{} prompt
+        // segments arrive as indexed colors and must dim with the pane.
+        let style = Style::default()
+            .fg(Color::Indexed(15))
+            .bg(Color::Indexed(42));
+
+        let dimmed = dimmed_inactive_style(
+            style,
+            Some((0, 0, 0)),
+            &crate::terminal_theme::TerminalTheme::default(),
+            0.4,
+        );
+
+        assert_eq!(dimmed.fg, Some(Color::Rgb(153, 153, 153)));
+        assert_eq!(dimmed.bg, Some(Color::Rgb(0, 129, 81)));
+        assert!(!dimmed.add_modifier.contains(Modifier::DIM));
+    }
+
+    #[test]
+    fn dimmed_inactive_style_prefers_host_palette_over_standard_values() {
+        // The host terminal reports its real palette via OSC 4; dimming must
+        // start from the on-screen hue (soft blue), not the xterm default
+        // navy, or dimmed cells shift to a completely different color.
+        let host_theme = crate::terminal_theme::TerminalTheme::default().with_palette_color(
+            4,
+            crate::terminal_theme::RgbColor {
+                r: 108,
+                g: 129,
+                b: 251,
+            },
+        );
+        let style = Style::default().fg(Color::Blue).bg(Color::Indexed(4));
+
+        let dimmed = dimmed_inactive_style(style, Some((0, 0, 0)), &host_theme, 0.4);
+
+        assert_eq!(dimmed.fg, Some(Color::Rgb(65, 77, 151)));
+        assert_eq!(dimmed.bg, Some(Color::Rgb(65, 77, 151)));
+    }
+
+    #[test]
+    fn dimmed_inactive_style_scales_default_fg_via_host_foreground() {
+        let host_theme = crate::terminal_theme::TerminalTheme {
+            foreground: Some(crate::terminal_theme::RgbColor {
+                r: 200,
+                g: 200,
+                b: 200,
+            }),
+            ..Default::default()
+        };
+        let style = Style::default().fg(Color::Reset).bg(Color::Reset);
+
+        let dimmed = dimmed_inactive_style(style, Some((0, 0, 0)), &host_theme, 0.4);
+
+        assert_eq!(dimmed.fg, Some(Color::Rgb(120, 120, 120)));
+        assert_eq!(dimmed.bg, Some(Color::Reset));
+        assert!(!dimmed.add_modifier.contains(Modifier::DIM));
+    }
+
+    #[test]
+    fn dim_color_toward_lightens_on_light_backgrounds() {
+        let dimmed = dim_color_toward(
+            Color::Rgb(100, 50, 25),
+            (250, 250, 250),
+            &crate::terminal_theme::TerminalTheme::default(),
+            0.4,
+        );
+        assert_eq!(dimmed, Some(Color::Rgb(162, 132, 117)));
+    }
+
+    #[test]
+    fn dim_color_toward_strength_controls_the_scale() {
+        let theme = crate::terminal_theme::TerminalTheme::default();
+        let color = Color::Rgb(200, 100, 50);
+
+        assert_eq!(
+            dim_color_toward(color, (0, 0, 0), &theme, 0.0),
+            Some(Color::Rgb(200, 100, 50))
+        );
+        assert_eq!(
+            dim_color_toward(color, (0, 0, 0), &theme, 1.0),
+            Some(Color::Rgb(0, 0, 0))
+        );
+    }
+
+    #[test]
+    fn dimmed_inactive_style_uses_dim_modifier_without_target() {
+        let style = Style::default().fg(Color::Rgb(10, 20, 30));
+
+        let dimmed = dimmed_inactive_style(
+            style,
+            None,
+            &crate::terminal_theme::TerminalTheme::default(),
+            0.4,
+        );
+
+        assert_eq!(dimmed.fg, Some(Color::Rgb(10, 20, 30)));
+        assert!(dimmed.add_modifier.contains(Modifier::DIM));
+    }
+
+    #[test]
+    fn inactive_dim_target_prefers_host_background_over_palette() {
+        let host_theme = crate::terminal_theme::TerminalTheme {
+            background: Some(crate::terminal_theme::RgbColor { r: 1, g: 2, b: 3 }),
+            ..Default::default()
+        };
+        assert_eq!(
+            inactive_dim_target(&Palette::catppuccin(), host_theme),
+            Some((1, 2, 3))
+        );
+
+        let no_host = crate::terminal_theme::TerminalTheme::default();
+        let palette = Palette::catppuccin();
+        assert_eq!(
+            inactive_dim_target(&palette, no_host),
+            color_to_rgb(palette.panel_bg)
+        );
     }
 
     #[test]

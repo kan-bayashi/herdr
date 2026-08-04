@@ -665,6 +665,18 @@
           "description": "Keep split panes visually separated instead of sharing divider borders."
         },
         {
+          "key": "ui.dim_inactive_panes",
+          "type": "boolean",
+          "default": "false",
+          "description": "Dim panes that are not focused while working in a pane."
+        },
+        {
+          "key": "ui.dim_inactive_panes_strength",
+          "type": "number",
+          "default": "0.4",
+          "description": "How strongly unfocused panes dim when dim_inactive_panes is on, from 0.0 (no dimming) to 1.0."
+        },
+        {
           "key": "ui.show_agent_labels_on_pane_borders",
           "type": "boolean",
           "default": "false",

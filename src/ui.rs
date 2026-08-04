@@ -40,6 +40,7 @@ use self::navigator::render_navigator_overlay;
 pub(crate) use self::onboarding::onboarding_welcome_continue_rect;
 use self::onboarding::render_onboarding_overlay;
 pub(crate) use self::panes::popup_pane_rects;
+pub(crate) use self::panes::{dim_color_toward, inactive_dim_target};
 use self::panes::{render_empty, render_popup_pane, resize_popup_pane};
 pub(crate) use self::release_notes::{
     product_announcement_display_lines, release_notes_close_button_rect,
@@ -598,7 +599,11 @@ mod tests {
     use super::keybind_help::keybind_help_groups;
     use super::scrollbar::scrollbar_thumb;
     use super::*;
-    use crate::{app::state::ViewLayout, layout::PaneInfo, workspace::Workspace};
+    use crate::{
+        app::state::ViewLayout,
+        layout::{PaneId, PaneInfo},
+        workspace::Workspace,
+    };
     use ratatui::style::Color;
     use ratatui::{backend::TestBackend, Terminal};
 
@@ -703,6 +708,79 @@ mod tests {
         terminal
             .backend_mut()
             .assert_cursor_position((focused.inner_rect.x + 4, focused.inner_rect.y));
+    }
+
+    fn app_with_split_terminals(
+        dim_inactive_panes: bool,
+    ) -> (crate::app::state::AppState, PaneId, PaneId) {
+        let mut app = crate::app::state::AppState::test_new();
+        let mut ws = Workspace::test_new("test");
+        let first_pane = ws.tabs[0].root_pane;
+        let second_pane = ws.test_split(ratatui::layout::Direction::Horizontal);
+
+        ws.insert_test_runtime(
+            first_pane,
+            crate::terminal::TerminalRuntime::test_with_screen_bytes(20, 5, b"left"),
+        );
+        ws.insert_test_runtime(
+            second_pane,
+            crate::terminal::TerminalRuntime::test_with_screen_bytes(20, 5, b"right"),
+        );
+        ws.tabs[0].layout.focus_pane(first_pane);
+
+        app.workspaces = vec![ws];
+        app.active = Some(0);
+        app.selected = 0;
+        app.mode = Mode::Terminal;
+        app.dim_inactive_panes = dim_inactive_panes;
+        (app, first_pane, second_pane)
+    }
+
+    fn pane_inner_origin_style(
+        app: &crate::app::state::AppState,
+        buffer: &ratatui::buffer::Buffer,
+        pane: PaneId,
+    ) -> Style {
+        let info = app
+            .view
+            .pane_infos
+            .iter()
+            .find(|info| info.id == pane)
+            .expect("pane info");
+        buffer[(info.inner_rect.x, info.inner_rect.y)].style()
+    }
+
+    fn rendered_pane_styles(dim_inactive_panes: bool) -> (Style, Style) {
+        let (mut app, focused_pane, unfocused_pane) = app_with_split_terminals(dim_inactive_panes);
+
+        compute_view(&mut app, Rect::new(0, 0, 80, 20));
+        let backend = TestBackend::new(80, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| render(&app, frame)).unwrap();
+        let buffer = terminal.backend().buffer();
+
+        (
+            pane_inner_origin_style(&app, buffer, focused_pane),
+            pane_inner_origin_style(&app, buffer, unfocused_pane),
+        )
+    }
+
+    #[tokio::test]
+    async fn dim_inactive_panes_dims_unfocused_pane_in_terminal_mode() {
+        let (focused_off, unfocused_off) = rendered_pane_styles(false);
+        let (focused_on, unfocused_on) = rendered_pane_styles(true);
+
+        // The focused pane renders identically; the unfocused pane visibly
+        // changes (blended colors or a DIM fallback, depending on how the
+        // cell colors resolve).
+        assert_eq!(focused_on, focused_off);
+        assert_ne!(unfocused_on, unfocused_off);
+    }
+
+    #[tokio::test]
+    async fn unfocused_pane_stays_bright_in_terminal_mode_by_default() {
+        let (_, unfocused_style) = rendered_pane_styles(false);
+        assert!(!unfocused_style.add_modifier.contains(Modifier::DIM));
     }
 
     #[test]
