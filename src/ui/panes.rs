@@ -328,12 +328,20 @@ pub(super) fn render_panes(
             let should_dim =
                 !info.is_focused && multi_pane && (!terminal_active || app.dim_inactive_panes);
             if should_dim {
+                // Legacy navigation-mode dim keeps the plain DIM modifier
+                // (blend target None); ui.dim_inactive_panes fades cell
+                // colors toward the pane background so colored backgrounds
+                // dim with the text.
+                let blend_target = app
+                    .dim_inactive_panes
+                    .then(|| inactive_dim_target(&app.palette, app.host_terminal_theme))
+                    .flatten();
                 let inner = info.inner_rect;
                 let buf = frame.buffer_mut();
                 for y in inner.y..inner.y + inner.height {
                     for x in inner.x..inner.x + inner.width {
                         let cell = &mut buf[(x, y)];
-                        cell.set_style(cell.style().add_modifier(Modifier::DIM));
+                        cell.set_style(dimmed_inactive_style(cell.style(), blend_target));
                     }
                 }
             }
@@ -921,6 +929,45 @@ fn color_to_rgb(color: Color) -> Option<Rgb> {
     }
 }
 
+const INACTIVE_PANE_DIM_BLEND: f32 = 0.5;
+
+/// Resolve the color that dimmed inactive-pane cells fade toward: the host
+/// terminal's detected background, falling back to theme surfaces.
+pub(crate) fn inactive_dim_target(
+    p: &Palette,
+    host_theme: crate::terminal_theme::TerminalTheme,
+) -> Option<(u8, u8, u8)> {
+    host_theme
+        .background
+        .map(terminal_theme_to_rgb)
+        .or_else(|| color_to_rgb(p.panel_bg))
+        .or_else(|| color_to_rgb(p.surface_dim))
+}
+
+/// Blend a cell color toward the dim target. Returns `None` for colors that
+/// have no resolvable RGB value (default/indexed), which callers must handle
+/// with a `Modifier::DIM` fallback.
+pub(crate) fn dim_color_toward(color: Color, target: (u8, u8, u8)) -> Option<Color> {
+    let rgb = color_to_rgb(color)?;
+    let (r, g, b) = mix_rgb(rgb, target, INACTIVE_PANE_DIM_BLEND);
+    Some(Color::Rgb(r, g, b))
+}
+
+fn dimmed_inactive_style(style: Style, target: Option<(u8, u8, u8)>) -> Style {
+    let Some(target) = target else {
+        return style.add_modifier(Modifier::DIM);
+    };
+    let mut dimmed = style;
+    match style.fg.and_then(|fg| dim_color_toward(fg, target)) {
+        Some(fg) => dimmed.fg = Some(fg),
+        None => dimmed = dimmed.add_modifier(Modifier::DIM),
+    }
+    if let Some(bg) = style.bg.and_then(|bg| dim_color_toward(bg, target)) {
+        dimmed.bg = Some(bg);
+    }
+    dimmed
+}
+
 pub(super) fn render_empty(app: &AppState, frame: &mut Frame, area: Rect) {
     let p = &app.palette;
     let lines = vec![
@@ -1470,6 +1517,59 @@ mod tests {
         assert_eq!(second.add_modifier, expected_style.add_modifier);
         assert_eq!(third.add_modifier, expected_style.add_modifier);
         assert!(!second.add_modifier.contains(Modifier::BOLD));
+    }
+
+    #[test]
+    fn dimmed_inactive_style_blends_fg_and_bg_toward_target() {
+        let style = Style::default()
+            .fg(Color::Rgb(200, 100, 50))
+            .bg(Color::Rgb(100, 200, 250));
+
+        let dimmed = dimmed_inactive_style(style, Some((0, 0, 0)));
+
+        assert_eq!(dimmed.fg, Some(Color::Rgb(100, 50, 25)));
+        assert_eq!(dimmed.bg, Some(Color::Rgb(50, 100, 125)));
+        assert!(!dimmed.add_modifier.contains(Modifier::DIM));
+    }
+
+    #[test]
+    fn dimmed_inactive_style_falls_back_to_dim_for_unblendable_fg() {
+        let style = Style::default().fg(Color::Indexed(42)).bg(Color::Reset);
+
+        let dimmed = dimmed_inactive_style(style, Some((0, 0, 0)));
+
+        assert_eq!(dimmed.fg, Some(Color::Indexed(42)));
+        assert_eq!(dimmed.bg, Some(Color::Reset));
+        assert!(dimmed.add_modifier.contains(Modifier::DIM));
+    }
+
+    #[test]
+    fn dimmed_inactive_style_uses_dim_modifier_without_target() {
+        let style = Style::default().fg(Color::Rgb(10, 20, 30));
+
+        let dimmed = dimmed_inactive_style(style, None);
+
+        assert_eq!(dimmed.fg, Some(Color::Rgb(10, 20, 30)));
+        assert!(dimmed.add_modifier.contains(Modifier::DIM));
+    }
+
+    #[test]
+    fn inactive_dim_target_prefers_host_background_over_palette() {
+        let host_theme = crate::terminal_theme::TerminalTheme {
+            background: Some(crate::terminal_theme::RgbColor { r: 1, g: 2, b: 3 }),
+            ..Default::default()
+        };
+        assert_eq!(
+            inactive_dim_target(&Palette::catppuccin(), host_theme),
+            Some((1, 2, 3))
+        );
+
+        let no_host = crate::terminal_theme::TerminalTheme::default();
+        let palette = Palette::catppuccin();
+        assert_eq!(
+            inactive_dim_target(&palette, no_host),
+            color_to_rgb(palette.panel_bg)
+        );
     }
 
     #[test]

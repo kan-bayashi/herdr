@@ -40,6 +40,7 @@ use self::navigator::render_navigator_overlay;
 pub(crate) use self::onboarding::onboarding_welcome_continue_rect;
 use self::onboarding::render_onboarding_overlay;
 pub(crate) use self::panes::popup_pane_rects;
+pub(crate) use self::panes::{dim_color_toward, inactive_dim_target};
 use self::panes::{render_empty, render_popup_pane, resize_popup_pane};
 pub(crate) use self::release_notes::{
     product_announcement_display_lines, release_notes_close_button_rect,
@@ -749,9 +750,8 @@ mod tests {
         buffer[(info.inner_rect.x, info.inner_rect.y)].style()
     }
 
-    #[tokio::test]
-    async fn dim_inactive_panes_dims_unfocused_pane_in_terminal_mode() {
-        let (mut app, focused_pane, unfocused_pane) = app_with_split_terminals(true);
+    fn rendered_pane_styles(dim_inactive_panes: bool) -> (Style, Style) {
+        let (mut app, focused_pane, unfocused_pane) = app_with_split_terminals(dim_inactive_panes);
 
         compute_view(&mut app, Rect::new(0, 0, 80, 20));
         let backend = TestBackend::new(80, 20);
@@ -759,24 +759,27 @@ mod tests {
         terminal.draw(|frame| render(&app, frame)).unwrap();
         let buffer = terminal.backend().buffer();
 
-        let focused_style = pane_inner_origin_style(&app, buffer, focused_pane);
-        let unfocused_style = pane_inner_origin_style(&app, buffer, unfocused_pane);
+        (
+            pane_inner_origin_style(&app, buffer, focused_pane),
+            pane_inner_origin_style(&app, buffer, unfocused_pane),
+        )
+    }
 
-        assert!(unfocused_style.add_modifier.contains(Modifier::DIM));
-        assert!(!focused_style.add_modifier.contains(Modifier::DIM));
+    #[tokio::test]
+    async fn dim_inactive_panes_dims_unfocused_pane_in_terminal_mode() {
+        let (focused_off, unfocused_off) = rendered_pane_styles(false);
+        let (focused_on, unfocused_on) = rendered_pane_styles(true);
+
+        // The focused pane renders identically; the unfocused pane visibly
+        // changes (blended colors or a DIM fallback, depending on how the
+        // cell colors resolve).
+        assert_eq!(focused_on, focused_off);
+        assert_ne!(unfocused_on, unfocused_off);
     }
 
     #[tokio::test]
     async fn unfocused_pane_stays_bright_in_terminal_mode_by_default() {
-        let (mut app, _, unfocused_pane) = app_with_split_terminals(false);
-
-        compute_view(&mut app, Rect::new(0, 0, 80, 20));
-        let backend = TestBackend::new(80, 20);
-        let mut terminal = Terminal::new(backend).unwrap();
-        terminal.draw(|frame| render(&app, frame)).unwrap();
-        let buffer = terminal.backend().buffer();
-
-        let unfocused_style = pane_inner_origin_style(&app, buffer, unfocused_pane);
+        let (_, unfocused_style) = rendered_pane_styles(false);
         assert!(!unfocused_style.add_modifier.contains(Modifier::DIM));
     }
 
