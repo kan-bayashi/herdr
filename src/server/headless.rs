@@ -221,6 +221,15 @@ fn apply_terminal_dirty_patch(
     true
 }
 
+fn dim_dirty_patch(patch: &mut crate::pane::TerminalDirtyPatch) {
+    let dim = ratatui::style::Modifier::DIM.bits();
+    for (_, row_cells) in &mut patch.rows {
+        for cell in row_cells {
+            cell.modifier |= dim;
+        }
+    }
+}
+
 fn dirty_patch_intersects_hyperlinks(
     frame: &FrameData,
     area: Rect,
@@ -3891,6 +3900,7 @@ impl HeadlessServer {
         }
 
         let mut touched = false;
+        let dim_unfocused = self.app.state.dim_inactive_panes && pane_infos.len() > 1;
         for info in pane_infos {
             if !rect_fits_frame(info.inner_rect, &frame) {
                 retained_fallback!("pane_rect_outside_frame");
@@ -3909,11 +3919,14 @@ impl HeadlessServer {
                 crate::pane::TerminalDirtyPatchOutcome::Fallback => {
                     retained_fallback!("dirty_patch_fallback");
                 }
-                crate::pane::TerminalDirtyPatchOutcome::Patch(patch) => {
+                crate::pane::TerminalDirtyPatchOutcome::Patch(mut patch) => {
                     crate::render_prof::event("retained.pane_patch");
                     crate::render_prof::counter("retained.patch_rows", patch.rows.len() as u64);
                     if dirty_patch_intersects_hyperlinks(&frame, info.inner_rect, &patch) {
                         retained_fallback!("hyperlink_intersection");
+                    }
+                    if dim_unfocused && !info.is_focused {
+                        dim_dirty_patch(&mut patch);
                     }
                     if !apply_terminal_dirty_patch(&mut frame, info.inner_rect, patch) {
                         retained_fallback!("patch_apply_failed");
@@ -4936,6 +4949,32 @@ mod tests {
             }),
             RetainedRenderPlan::HiddenPty
         );
+    }
+
+    #[test]
+    fn dim_dirty_patch_adds_dim_to_every_cell() {
+        let cell = crate::protocol::CellData {
+            symbol: "x".to_string(),
+            fg: 0,
+            bg: 0,
+            modifier: ratatui::style::Modifier::BOLD.bits(),
+            skip: false,
+            hyperlink: None,
+        };
+        let mut patch = crate::pane::TerminalDirtyPatch {
+            rows: vec![(0, vec![cell.clone()]), (2, vec![cell])],
+        };
+
+        dim_dirty_patch(&mut patch);
+
+        let dim = ratatui::style::Modifier::DIM.bits();
+        let bold = ratatui::style::Modifier::BOLD.bits();
+        for (_, row_cells) in &patch.rows {
+            for cell in row_cells {
+                assert_eq!(cell.modifier & dim, dim);
+                assert_eq!(cell.modifier & bold, bold);
+            }
+        }
     }
 
     fn test_headless_server() -> HeadlessServer {

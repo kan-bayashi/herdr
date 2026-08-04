@@ -4,6 +4,7 @@
 
 ### Added
 - The plugin marketplace now discovers valid manifests at repository roots and subdirectories, groups multiple plugins under each repository, and publishes their versions and exact default-branch commits.
+- Added `ui.dim_inactive_panes = true` to dim unfocused panes while working in a split.
 
 ## [0.8.0] - 2026-08-03
 

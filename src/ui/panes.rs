@@ -325,7 +325,8 @@ pub(super) fn render_panes(
             rt.render(frame, info.inner_rect, show_cursor);
             render_pane_scrollbar(app, frame, info, rt);
 
-            let should_dim = !info.is_focused && multi_pane && !terminal_active;
+            let should_dim =
+                !info.is_focused && multi_pane && (!terminal_active || app.dim_inactive_panes);
             if should_dim {
                 let inner = info.inner_rect;
                 let buf = frame.buffer_mut();
