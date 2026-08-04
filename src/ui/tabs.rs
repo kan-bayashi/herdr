@@ -8,10 +8,18 @@ use ratatui::{
 use super::text::display_width_u16;
 use super::widgets::panel_contrast_fg;
 use crate::app::AppState;
+use crate::config::TabSeparators;
 
 const MIN_TAB_WIDTH: u16 = 8;
 const NEW_TAB_WIDTH: u16 = 3;
 const TAB_SCROLL_BUTTON_WIDTH: u16 = 3;
+
+fn separator_widths(separators: &TabSeparators) -> (u16, u16) {
+    (
+        display_width_u16(&separators.left),
+        display_width_u16(&separators.right),
+    )
+}
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct TabBarView {
@@ -22,10 +30,11 @@ pub(crate) struct TabBarView {
     pub new_tab_hit_area: Rect,
 }
 
-fn tab_width(ws: &crate::workspace::Workspace, tab_idx: usize) -> u16 {
+fn tab_width(ws: &crate::workspace::Workspace, tab_idx: usize, separator_width: u16) -> u16 {
     display_width_u16(&tab_chrome_label(ws, tab_idx))
         .saturating_add(4)
         .max(MIN_TAB_WIDTH)
+        .saturating_add(separator_width)
 }
 
 fn tab_chrome_label(ws: &crate::workspace::Workspace, tab_idx: usize) -> String {
@@ -39,7 +48,12 @@ fn tab_chrome_label(ws: &crate::workspace::Workspace, tab_idx: usize) -> String 
     }
 }
 
-fn layout_tab_hit_areas(ws: &crate::workspace::Workspace, area: Rect, scroll: usize) -> Vec<Rect> {
+fn layout_tab_hit_areas(
+    ws: &crate::workspace::Workspace,
+    area: Rect,
+    scroll: usize,
+    separator_width: u16,
+) -> Vec<Rect> {
     let mut rects = vec![Rect::default(); ws.tabs.len()];
     if area.width == 0 || area.height == 0 {
         return rects;
@@ -51,7 +65,7 @@ fn layout_tab_hit_areas(ws: &crate::workspace::Workspace, area: Rect, scroll: us
         if x >= right {
             break;
         }
-        let desired = tab_width(ws, idx);
+        let desired = tab_width(ws, idx, separator_width);
         let remaining = right.saturating_sub(x);
         let width = desired.min(remaining).max(1);
         *rect = Rect::new(x, area.y, width, 1);
@@ -60,13 +74,17 @@ fn layout_tab_hit_areas(ws: &crate::workspace::Workspace, area: Rect, scroll: us
     rects
 }
 
-fn centered_tab_scroll(ws: &crate::workspace::Workspace, area: Rect) -> usize {
+fn centered_tab_scroll(
+    ws: &crate::workspace::Workspace,
+    area: Rect,
+    separator_width: u16,
+) -> usize {
     let mut best_scroll = ws.active_tab;
     let mut best_distance = u16::MAX;
     let viewport_center = area.x.saturating_mul(2).saturating_add(area.width);
 
     for scroll in 0..=ws.active_tab {
-        let rects = layout_tab_hit_areas(ws, area, scroll);
+        let rects = layout_tab_hit_areas(ws, area, scroll, separator_width);
         let Some(active_rect) = rects.get(ws.active_tab).copied() else {
             continue;
         };
@@ -97,10 +115,10 @@ fn trailing_tab_controls_x(tab_hit_areas: &[Rect], fallback_x: u16) -> u16 {
         .unwrap_or(fallback_x)
 }
 
-fn max_tab_scroll(ws: &crate::workspace::Workspace, area: Rect) -> usize {
+fn max_tab_scroll(ws: &crate::workspace::Workspace, area: Rect, separator_width: u16) -> usize {
     (0..ws.tabs.len())
         .find(|&scroll| {
-            layout_tab_hit_areas(ws, area, scroll)
+            layout_tab_hit_areas(ws, area, scroll, separator_width)
                 .last()
                 .is_some_and(|rect| rect.width > 0)
         })
@@ -113,21 +131,24 @@ pub(crate) fn compute_tab_bar_view(
     current_scroll: usize,
     follow_active: bool,
     mouse_chrome: bool,
+    separators: &TabSeparators,
 ) -> TabBarView {
     if area.width == 0 || area.height == 0 {
         return TabBarView::default();
     }
+    let (left_width, right_width) = separator_widths(separators);
+    let separator_width = left_width.saturating_add(right_width);
 
     if !mouse_chrome {
-        let max_scroll = max_tab_scroll(ws, area);
+        let max_scroll = max_tab_scroll(ws, area, separator_width);
         let scroll = if follow_active {
-            centered_tab_scroll(ws, area).min(max_scroll)
+            centered_tab_scroll(ws, area, separator_width).min(max_scroll)
         } else {
             current_scroll.min(max_scroll)
         };
         return TabBarView {
             scroll,
-            tab_hit_areas: layout_tab_hit_areas(ws, area, scroll),
+            tab_hit_areas: layout_tab_hit_areas(ws, area, scroll, separator_width),
             scroll_left_hit_area: Rect::default(),
             scroll_right_hit_area: Rect::default(),
             new_tab_hit_area: Rect::default(),
@@ -141,7 +162,7 @@ pub(crate) fn compute_tab_bar_view(
         area.width.saturating_sub(NEW_TAB_WIDTH),
         area.height,
     );
-    let all_tabs = layout_tab_hit_areas(ws, all_tabs_area, 0);
+    let all_tabs = layout_tab_hit_areas(ws, all_tabs_area, 0, separator_width);
     let overflow = all_tabs.iter().any(|rect| rect.width == 0);
     if !overflow {
         let new_tab_x = trailing_tab_controls_x(&all_tabs, area.x);
@@ -171,13 +192,13 @@ pub(crate) fn compute_tab_bar_view(
         area.height,
     );
 
-    let max_scroll = max_tab_scroll(ws, tab_area);
+    let max_scroll = max_tab_scroll(ws, tab_area, separator_width);
     let scroll = if follow_active {
-        centered_tab_scroll(ws, tab_area).min(max_scroll)
+        centered_tab_scroll(ws, tab_area, separator_width).min(max_scroll)
     } else {
         current_scroll.min(max_scroll)
     };
-    let tab_hit_areas = layout_tab_hit_areas(ws, tab_area, scroll);
+    let tab_hit_areas = layout_tab_hit_areas(ws, tab_area, scroll, separator_width);
     let trailing_x = trailing_tab_controls_x(&tab_hit_areas, tab_area_x).min(tab_area_right);
     let right_hit_area = Rect::new(
         trailing_x,
@@ -313,6 +334,7 @@ pub(super) fn render_tab_bar(app: &AppState, frame: &mut Frame, area: Rect) {
         );
     }
 
+    let (left_sep_width, right_sep_width) = separator_widths(&app.tab_separators);
     for (idx, tab) in ws.tabs.iter().enumerate() {
         let Some(rect) = app.view.tab_hit_areas.get(idx).copied() else {
             break;
@@ -321,6 +343,7 @@ pub(super) fn render_tab_bar(app: &AppState, frame: &mut Frame, area: Rect) {
             continue;
         }
         let active = idx == ws.active_tab;
+        let tab_bg = if active { p.accent } else { p.surface0 };
         let style = if active {
             let base = Style::default().fg(panel_contrast_fg(p)).bg(p.accent);
             if tab.is_auto_named() {
@@ -336,10 +359,31 @@ pub(super) fn render_tab_bar(app: &AppState, frame: &mut Frame, area: Rect) {
         } else {
             Style::default().fg(p.overlay1).bg(p.surface0)
         };
-        let width = rect.width as usize;
+        // Keep separators only when the (possibly clipped) rect still has room
+        // for at least one label cell between them.
+        let (left_w, right_w) = if rect.width > left_sep_width.saturating_add(right_sep_width) {
+            (left_sep_width, right_sep_width)
+        } else {
+            (0, 0)
+        };
+        let separator_style = Style::default().fg(tab_bg).bg(p.panel_bg);
+        if left_w > 0 {
+            frame.render_widget(
+                Paragraph::new(app.tab_separators.left.as_str()).style(separator_style),
+                Rect::new(rect.x, rect.y, left_w, 1),
+            );
+        }
+        if right_w > 0 {
+            frame.render_widget(
+                Paragraph::new(app.tab_separators.right.as_str()).style(separator_style),
+                Rect::new(rect.x + rect.width - right_w, rect.y, right_w, 1),
+            );
+        }
+        let label_rect = Rect::new(rect.x + left_w, rect.y, rect.width - left_w - right_w, 1);
+        let width = label_rect.width as usize;
         let name = tab_chrome_label(ws, idx);
         let text = format!(" {:width$}", name, width = width.saturating_sub(1));
-        frame.render_widget(Paragraph::new(text).style(style), rect);
+        frame.render_widget(Paragraph::new(text).style(style), label_rect);
     }
 
     if let Some(crate::app::state::DragState {
@@ -419,7 +463,14 @@ mod tests {
         app.workspaces = vec![ws];
         app.active = Some(0);
         app.view.tab_bar_rect = Rect::new(0, 0, 30, 1);
-        let view = compute_tab_bar_view(&app.workspaces[0], app.view.tab_bar_rect, 0, true, false);
+        let view = compute_tab_bar_view(
+            &app.workspaces[0],
+            app.view.tab_bar_rect,
+            0,
+            true,
+            false,
+            &TabSeparators::default(),
+        );
         app.view.tab_hit_areas = view.tab_hit_areas;
 
         let backend = TestBackend::new(30, 1);
@@ -446,7 +497,14 @@ mod tests {
         app.workspaces = vec![ws];
         app.active = Some(0);
         app.view.tab_bar_rect = Rect::new(0, 0, 30, 1);
-        let view = compute_tab_bar_view(&app.workspaces[0], app.view.tab_bar_rect, 0, true, false);
+        let view = compute_tab_bar_view(
+            &app.workspaces[0],
+            app.view.tab_bar_rect,
+            0,
+            true,
+            false,
+            &TabSeparators::default(),
+        );
         app.view.tab_hit_areas = view.tab_hit_areas;
 
         let backend = TestBackend::new(30, 1);
@@ -469,7 +527,7 @@ mod tests {
         ws.tabs[0].set_custom_name("abcdefgh".into());
         ws.tabs[0].zoomed = true;
 
-        assert_eq!(tab_width(&ws, 0), 14);
+        assert_eq!(tab_width(&ws, 0, 0), 14);
     }
 
     #[test]
@@ -478,7 +536,7 @@ mod tests {
         ws.tabs[0].set_custom_name("提交 herdr 的反馈".into());
 
         assert_eq!(
-            tab_width(&ws, 0),
+            tab_width(&ws, 0, 0),
             display_width_u16("提交 herdr 的反馈") + 4
         );
     }
@@ -492,7 +550,14 @@ mod tests {
         app.active = Some(0);
         app.workspaces = vec![ws];
         app.view.tab_bar_rect = Rect::new(0, 0, 30, 1);
-        let view = compute_tab_bar_view(&app.workspaces[0], app.view.tab_bar_rect, 0, true, false);
+        let view = compute_tab_bar_view(
+            &app.workspaces[0],
+            app.view.tab_bar_rect,
+            0,
+            true,
+            false,
+            &TabSeparators::default(),
+        );
         app.view.tab_hit_areas = view.tab_hit_areas;
 
         let backend = TestBackend::new(30, 1);
@@ -503,5 +568,89 @@ mod tests {
 
         let row = buffer_row_text(terminal.backend().buffer(), app.view.tab_bar_rect, 0);
         assert!(row.contains('馈'), "tab row: {row:?}");
+    }
+
+    #[test]
+    fn tab_width_includes_separator_width() {
+        let mut ws = Workspace::test_new("test");
+        ws.tabs[0].set_custom_name("abcdefgh".into());
+
+        assert_eq!(tab_width(&ws, 0, 2), tab_width(&ws, 0, 0) + 2);
+    }
+
+    #[test]
+    fn tab_bar_renders_configured_separators_at_tab_edges() {
+        let mut app = AppState::test_new();
+        let mut ws = Workspace::test_new("test");
+        ws.tabs[0].set_custom_name("abcdefgh".into());
+        app.tab_separators = TabSeparators {
+            left: "▐".into(),
+            right: "▌".into(),
+        };
+
+        app.workspaces = vec![ws];
+        app.active = Some(0);
+        app.view.tab_bar_rect = Rect::new(0, 0, 30, 1);
+        let view = compute_tab_bar_view(
+            &app.workspaces[0],
+            app.view.tab_bar_rect,
+            0,
+            true,
+            false,
+            &app.tab_separators,
+        );
+        app.view.tab_hit_areas = view.tab_hit_areas;
+
+        let backend = TestBackend::new(30, 1);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| render_tab_bar(&app, frame, app.view.tab_bar_rect))
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let tab_rect = app.view.tab_hit_areas[0];
+        let left_cell = &buffer[(tab_rect.x, tab_rect.y)];
+        let right_cell = &buffer[(tab_rect.x + tab_rect.width - 1, tab_rect.y)];
+        assert_eq!(left_cell.symbol(), "▐");
+        assert_eq!(right_cell.symbol(), "▌");
+        assert_eq!(left_cell.style().fg, Some(app.palette.accent));
+        assert_eq!(left_cell.style().bg, Some(app.palette.panel_bg));
+
+        let row = buffer_row_text(buffer, app.view.tab_bar_rect, 0);
+        assert!(row.contains("abcdefgh"), "tab row: {row:?}");
+    }
+
+    #[test]
+    fn tab_bar_drops_separators_when_a_clipped_tab_cannot_fit_them() {
+        let mut app = AppState::test_new();
+        let mut ws = Workspace::test_new("test");
+        ws.tabs[0].set_custom_name("abcdefgh".into());
+        app.tab_separators = TabSeparators {
+            left: "▐".into(),
+            right: "▌".into(),
+        };
+
+        app.workspaces = vec![ws];
+        app.active = Some(0);
+        app.view.tab_bar_rect = Rect::new(0, 0, 2, 1);
+        let view = compute_tab_bar_view(
+            &app.workspaces[0],
+            app.view.tab_bar_rect,
+            0,
+            true,
+            false,
+            &app.tab_separators,
+        );
+        app.view.tab_hit_areas = view.tab_hit_areas;
+
+        let backend = TestBackend::new(2, 1);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| render_tab_bar(&app, frame, app.view.tab_bar_rect))
+            .unwrap();
+
+        let row = buffer_row_text(terminal.backend().buffer(), app.view.tab_bar_rect, 0);
+        assert!(!row.contains('▐'), "tab row: {row:?}");
+        assert!(!row.contains('▌'), "tab row: {row:?}");
     }
 }

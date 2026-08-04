@@ -699,6 +699,18 @@
           ]
         },
         {
+          "key": "ui.tab_separator_left",
+          "type": "string",
+          "default": "\"\"",
+          "description": "Decoration drawn at the left edge of each tab, colored to match the tab. Powerline glyphs work here. Empty disables it."
+        },
+        {
+          "key": "ui.tab_separator_right",
+          "type": "string",
+          "default": "\"\"",
+          "description": "Decoration drawn at the right edge of each tab, colored to match the tab. Powerline glyphs work here. Empty disables it."
+        },
+        {
           "key": "ui.agent_panel_sort",
           "type": "enum",
           "default": "\"spaces\"",

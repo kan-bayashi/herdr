@@ -5,6 +5,7 @@
 ### Added
 - The plugin marketplace now discovers valid manifests at repository roots and subdirectories, groups multiple plugins under each repository, and publishes their versions and exact default-branch commits.
 - Added `ui.dim_inactive_panes = true` to dim unfocused panes while working in a split.
+- Added `ui.tab_separator_left` and `ui.tab_separator_right` to draw tab edge decorations, such as powerline glyphs, in the tab bar.
 
 ## [0.8.0] - 2026-08-03
 

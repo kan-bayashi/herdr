@@ -328,6 +328,11 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # Desktop tab row placement: "top" or "bottom".
 # tab_bar_position = "top"
 
+# Decorations drawn at the left/right edge of each tab, colored to match the tab.
+# Powerline glyphs (e.g. "" / "") work here. Empty disables them.
+# tab_separator_left = ""
+# tab_separator_right = ""
+
 # Agent panel ordering: "spaces" (grouped by space) or "priority" (attention queue).
 # "workspaces" is accepted as an alias for "spaces".
 # agent_panel_sort = "spaces"

@@ -21,8 +21,9 @@ pub use self::{
     model::{
         validated_sidebar_bounds, AgentPanelSortConfig, Config, ConfigReloadReport,
         ConfigReloadStatus, HostCursorModeConfig, NewTerminalCwdConfig, ShellModeConfig,
-        SidebarCollapsedModeConfig, TabBarPositionConfig, ToastClipboardPosition, ToastConfig,
-        ToastDelivery, ToastHerdrPosition, UpdateChannelConfig, MAX_TOAST_DELAY_SECONDS,
+        SidebarCollapsedModeConfig, TabBarPositionConfig, TabSeparators, ToastClipboardPosition,
+        ToastConfig, ToastDelivery, ToastHerdrPosition, UpdateChannelConfig,
+        MAX_TOAST_DELAY_SECONDS,
     },
     sidebar::{
         AgentSidebarToken, AgentsSidebarConfig, SidebarConfig, SidebarTokenStyle,
@@ -73,6 +74,7 @@ impl Config {
             .chain(self.remote_image_paste_key().err())
             .chain(self.ui.sound.diagnostics())
             .chain(self.invalid_sidebar_bounds_diagnostic())
+            .chain(self.ui.tab_separator_diagnostics())
             .collect()
     }
 
