@@ -944,12 +944,69 @@ pub(crate) fn inactive_dim_target(
         .or_else(|| color_to_rgb(p.surface_dim))
 }
 
-/// Blend a cell color toward the dim target. Returns `None` for colors that
-/// have no resolvable RGB value (default/indexed), which callers must handle
-/// with a `Modifier::DIM` fallback.
+/// Standard xterm 256-color palette values. Entries 0-15 use the same
+/// approximations as `color_to_rgb`; the host terminal may theme them
+/// differently, but a close match is enough for dimming.
+fn indexed_to_rgb(index: u8) -> Rgb {
+    match index {
+        0 => (0, 0, 0),
+        1 => (128, 0, 0),
+        2 => (0, 128, 0),
+        3 => (128, 128, 0),
+        4 => (0, 0, 128),
+        5 => (128, 0, 128),
+        6 => (0, 128, 128),
+        7 => (192, 192, 192),
+        8 => (128, 128, 128),
+        9 => (255, 0, 0),
+        10 => (0, 255, 0),
+        11 => (255, 255, 0),
+        12 => (0, 0, 255),
+        13 => (255, 0, 255),
+        14 => (0, 255, 255),
+        15 => (255, 255, 255),
+        16..=231 => {
+            let value = |component: u8| {
+                if component == 0 {
+                    0
+                } else {
+                    55 + 40 * component
+                }
+            };
+            let offset = index - 16;
+            (
+                value(offset / 36),
+                value((offset % 36) / 6),
+                value(offset % 6),
+            )
+        }
+        232..=255 => {
+            let gray = 8 + 10 * (index - 232);
+            (gray, gray, gray)
+        }
+    }
+}
+
+fn dim_color_to_rgb(color: Color) -> Option<Rgb> {
+    match color {
+        Color::Indexed(index) => Some(indexed_to_rgb(index)),
+        other => color_to_rgb(other),
+    }
+}
+
+/// Scale a cell color for inactive-pane dimming. Colors move toward black on
+/// dark backgrounds and toward white on light ones, so foreground/background
+/// contrast is preserved instead of washing text into its background.
+/// Returns `None` for colors with no resolvable RGB value (terminal
+/// defaults), which callers must handle with a `Modifier::DIM` fallback.
 pub(crate) fn dim_color_toward(color: Color, target: (u8, u8, u8)) -> Option<Color> {
-    let rgb = color_to_rgb(color)?;
-    let (r, g, b) = mix_rgb(rgb, target, INACTIVE_PANE_DIM_BLEND);
+    let rgb = dim_color_to_rgb(color)?;
+    let toward = if relative_luminance(target) < 0.5 {
+        (0, 0, 0)
+    } else {
+        (255, 255, 255)
+    };
+    let (r, g, b) = mix_rgb(rgb, toward, INACTIVE_PANE_DIM_BLEND);
     Some(Color::Rgb(r, g, b))
 }
 
@@ -1534,13 +1591,34 @@ mod tests {
 
     #[test]
     fn dimmed_inactive_style_falls_back_to_dim_for_unblendable_fg() {
-        let style = Style::default().fg(Color::Indexed(42)).bg(Color::Reset);
+        let style = Style::default().fg(Color::Reset).bg(Color::Reset);
 
         let dimmed = dimmed_inactive_style(style, Some((0, 0, 0)));
 
-        assert_eq!(dimmed.fg, Some(Color::Indexed(42)));
+        assert_eq!(dimmed.fg, Some(Color::Reset));
         assert_eq!(dimmed.bg, Some(Color::Reset));
         assert!(dimmed.add_modifier.contains(Modifier::DIM));
+    }
+
+    #[test]
+    fn dimmed_inactive_style_resolves_indexed_palette_colors() {
+        // Indexed(42) = color-cube entry (0, 215, 135); zsh %K{} prompt
+        // segments arrive as indexed colors and must dim with the pane.
+        let style = Style::default()
+            .fg(Color::Indexed(15))
+            .bg(Color::Indexed(42));
+
+        let dimmed = dimmed_inactive_style(style, Some((0, 0, 0)));
+
+        assert_eq!(dimmed.fg, Some(Color::Rgb(128, 128, 128)));
+        assert_eq!(dimmed.bg, Some(Color::Rgb(0, 108, 68)));
+        assert!(!dimmed.add_modifier.contains(Modifier::DIM));
+    }
+
+    #[test]
+    fn dim_color_toward_lightens_on_light_backgrounds() {
+        let dimmed = dim_color_toward(Color::Rgb(100, 50, 25), (250, 250, 250));
+        assert_eq!(dimmed, Some(Color::Rgb(178, 153, 140)));
     }
 
     #[test]

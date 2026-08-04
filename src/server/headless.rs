@@ -5014,7 +5014,7 @@ mod tests {
     #[test]
     fn dim_dirty_patch_falls_back_to_dim_modifier_without_blendable_colors() {
         use ratatui::style::Color;
-        let unblendable = test_cell(Color::Indexed(42), Color::Reset);
+        let unblendable = test_cell(Color::Reset, Color::Reset);
         let mut patch = crate::pane::TerminalDirtyPatch {
             rows: vec![
                 (0, vec![unblendable.clone()]),
