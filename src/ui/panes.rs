@@ -341,7 +341,11 @@ pub(super) fn render_panes(
                 for y in inner.y..inner.y + inner.height {
                     for x in inner.x..inner.x + inner.width {
                         let cell = &mut buf[(x, y)];
-                        cell.set_style(dimmed_inactive_style(cell.style(), blend_target));
+                        cell.set_style(dimmed_inactive_style(
+                            cell.style(),
+                            blend_target,
+                            &app.host_terminal_theme,
+                        ));
                     }
                 }
             }
@@ -987,10 +991,45 @@ fn indexed_to_rgb(index: u8) -> Rgb {
     }
 }
 
-fn dim_color_to_rgb(color: Color) -> Option<Rgb> {
+fn named_ansi_index(color: Color) -> Option<u8> {
     match color {
-        Color::Indexed(index) => Some(indexed_to_rgb(index)),
-        other => color_to_rgb(other),
+        Color::Black => Some(0),
+        Color::Red => Some(1),
+        Color::Green => Some(2),
+        Color::Yellow => Some(3),
+        Color::Blue => Some(4),
+        Color::Magenta => Some(5),
+        Color::Cyan => Some(6),
+        Color::Gray => Some(7),
+        Color::DarkGray => Some(8),
+        Color::LightRed => Some(9),
+        Color::LightGreen => Some(10),
+        Color::LightYellow => Some(11),
+        Color::LightBlue => Some(12),
+        Color::LightMagenta => Some(13),
+        Color::LightCyan => Some(14),
+        Color::White => Some(15),
+        _ => None,
+    }
+}
+
+/// Resolve a cell color to RGB for dimming, preferring the host terminal's
+/// reported palette (OSC 4) so dimmed colors keep the on-screen hue, and
+/// falling back to standard xterm values when the host palette is unknown.
+fn dim_color_to_rgb(
+    color: Color,
+    host_theme: &crate::terminal_theme::TerminalTheme,
+) -> Option<Rgb> {
+    let host_palette =
+        |index: u8| host_theme.palette[usize::from(index)].map(terminal_theme_to_rgb);
+    match color {
+        Color::Indexed(index) => Some(host_palette(index).unwrap_or_else(|| indexed_to_rgb(index))),
+        Color::Rgb(r, g, b) => Some((r, g, b)),
+        Color::Reset => None,
+        named => match named_ansi_index(named) {
+            Some(index) => host_palette(index).or_else(|| color_to_rgb(named)),
+            None => color_to_rgb(named),
+        },
     }
 }
 
@@ -999,8 +1038,12 @@ fn dim_color_to_rgb(color: Color) -> Option<Rgb> {
 /// contrast is preserved instead of washing text into its background.
 /// Returns `None` for colors with no resolvable RGB value (terminal
 /// defaults), which callers must handle with a `Modifier::DIM` fallback.
-pub(crate) fn dim_color_toward(color: Color, target: (u8, u8, u8)) -> Option<Color> {
-    let rgb = dim_color_to_rgb(color)?;
+pub(crate) fn dim_color_toward(
+    color: Color,
+    target: (u8, u8, u8),
+    host_theme: &crate::terminal_theme::TerminalTheme,
+) -> Option<Color> {
+    let rgb = dim_color_to_rgb(color, host_theme)?;
     let toward = if relative_luminance(target) < 0.5 {
         (0, 0, 0)
     } else {
@@ -1010,16 +1053,31 @@ pub(crate) fn dim_color_toward(color: Color, target: (u8, u8, u8)) -> Option<Col
     Some(Color::Rgb(r, g, b))
 }
 
-fn dimmed_inactive_style(style: Style, target: Option<(u8, u8, u8)>) -> Style {
+fn dimmed_inactive_style(
+    style: Style,
+    target: Option<(u8, u8, u8)>,
+    host_theme: &crate::terminal_theme::TerminalTheme,
+) -> Style {
     let Some(target) = target else {
         return style.add_modifier(Modifier::DIM);
     };
     let mut dimmed = style;
-    match style.fg.and_then(|fg| dim_color_toward(fg, target)) {
+    let default_fg = || {
+        let fg = host_theme.foreground.map(terminal_theme_to_rgb)?;
+        dim_color_toward(Color::Rgb(fg.0, fg.1, fg.2), target, host_theme)
+    };
+    match style
+        .fg
+        .and_then(|fg| dim_color_toward(fg, target, host_theme))
+        .or_else(default_fg)
+    {
         Some(fg) => dimmed.fg = Some(fg),
         None => dimmed = dimmed.add_modifier(Modifier::DIM),
     }
-    if let Some(bg) = style.bg.and_then(|bg| dim_color_toward(bg, target)) {
+    if let Some(bg) = style
+        .bg
+        .and_then(|bg| dim_color_toward(bg, target, host_theme))
+    {
         dimmed.bg = Some(bg);
     }
     dimmed
@@ -1582,7 +1640,11 @@ mod tests {
             .fg(Color::Rgb(200, 100, 50))
             .bg(Color::Rgb(100, 200, 250));
 
-        let dimmed = dimmed_inactive_style(style, Some((0, 0, 0)));
+        let dimmed = dimmed_inactive_style(
+            style,
+            Some((0, 0, 0)),
+            &crate::terminal_theme::TerminalTheme::default(),
+        );
 
         assert_eq!(dimmed.fg, Some(Color::Rgb(100, 50, 25)));
         assert_eq!(dimmed.bg, Some(Color::Rgb(50, 100, 125)));
@@ -1593,7 +1655,11 @@ mod tests {
     fn dimmed_inactive_style_falls_back_to_dim_for_unblendable_fg() {
         let style = Style::default().fg(Color::Reset).bg(Color::Reset);
 
-        let dimmed = dimmed_inactive_style(style, Some((0, 0, 0)));
+        let dimmed = dimmed_inactive_style(
+            style,
+            Some((0, 0, 0)),
+            &crate::terminal_theme::TerminalTheme::default(),
+        );
 
         assert_eq!(dimmed.fg, Some(Color::Reset));
         assert_eq!(dimmed.bg, Some(Color::Reset));
@@ -1608,7 +1674,11 @@ mod tests {
             .fg(Color::Indexed(15))
             .bg(Color::Indexed(42));
 
-        let dimmed = dimmed_inactive_style(style, Some((0, 0, 0)));
+        let dimmed = dimmed_inactive_style(
+            style,
+            Some((0, 0, 0)),
+            &crate::terminal_theme::TerminalTheme::default(),
+        );
 
         assert_eq!(dimmed.fg, Some(Color::Rgb(128, 128, 128)));
         assert_eq!(dimmed.bg, Some(Color::Rgb(0, 108, 68)));
@@ -1616,8 +1686,52 @@ mod tests {
     }
 
     #[test]
+    fn dimmed_inactive_style_prefers_host_palette_over_standard_values() {
+        // The host terminal reports its real palette via OSC 4; dimming must
+        // start from the on-screen hue (soft blue), not the xterm default
+        // navy, or dimmed cells shift to a completely different color.
+        let host_theme = crate::terminal_theme::TerminalTheme::default().with_palette_color(
+            4,
+            crate::terminal_theme::RgbColor {
+                r: 108,
+                g: 129,
+                b: 251,
+            },
+        );
+        let style = Style::default().fg(Color::Blue).bg(Color::Indexed(4));
+
+        let dimmed = dimmed_inactive_style(style, Some((0, 0, 0)), &host_theme);
+
+        assert_eq!(dimmed.fg, Some(Color::Rgb(54, 65, 126)));
+        assert_eq!(dimmed.bg, Some(Color::Rgb(54, 65, 126)));
+    }
+
+    #[test]
+    fn dimmed_inactive_style_scales_default_fg_via_host_foreground() {
+        let host_theme = crate::terminal_theme::TerminalTheme {
+            foreground: Some(crate::terminal_theme::RgbColor {
+                r: 200,
+                g: 200,
+                b: 200,
+            }),
+            ..Default::default()
+        };
+        let style = Style::default().fg(Color::Reset).bg(Color::Reset);
+
+        let dimmed = dimmed_inactive_style(style, Some((0, 0, 0)), &host_theme);
+
+        assert_eq!(dimmed.fg, Some(Color::Rgb(100, 100, 100)));
+        assert_eq!(dimmed.bg, Some(Color::Reset));
+        assert!(!dimmed.add_modifier.contains(Modifier::DIM));
+    }
+
+    #[test]
     fn dim_color_toward_lightens_on_light_backgrounds() {
-        let dimmed = dim_color_toward(Color::Rgb(100, 50, 25), (250, 250, 250));
+        let dimmed = dim_color_toward(
+            Color::Rgb(100, 50, 25),
+            (250, 250, 250),
+            &crate::terminal_theme::TerminalTheme::default(),
+        );
         assert_eq!(dimmed, Some(Color::Rgb(178, 153, 140)));
     }
 
@@ -1625,7 +1739,11 @@ mod tests {
     fn dimmed_inactive_style_uses_dim_modifier_without_target() {
         let style = Style::default().fg(Color::Rgb(10, 20, 30));
 
-        let dimmed = dimmed_inactive_style(style, None);
+        let dimmed = dimmed_inactive_style(
+            style,
+            None,
+            &crate::terminal_theme::TerminalTheme::default(),
+        );
 
         assert_eq!(dimmed.fg, Some(Color::Rgb(10, 20, 30)));
         assert!(dimmed.add_modifier.contains(Modifier::DIM));

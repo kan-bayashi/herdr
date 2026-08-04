@@ -221,22 +221,35 @@ fn apply_terminal_dirty_patch(
     true
 }
 
-fn dim_dirty_patch(patch: &mut crate::pane::TerminalDirtyPatch, target: Option<(u8, u8, u8)>) {
+fn dim_dirty_patch(
+    patch: &mut crate::pane::TerminalDirtyPatch,
+    target: Option<(u8, u8, u8)>,
+    host_theme: &crate::terminal_theme::TerminalTheme,
+) {
     use crate::protocol::{color_to_u32, u32_to_color};
     use crate::ui::dim_color_toward;
 
     let dim = ratatui::style::Modifier::DIM.bits();
+    let dimmed_default_fg = target.and_then(|target| {
+        let fg = host_theme.foreground?;
+        dim_color_toward(
+            ratatui::style::Color::Rgb(fg.r, fg.g, fg.b),
+            target,
+            host_theme,
+        )
+    });
     for (_, row_cells) in &mut patch.rows {
         for cell in row_cells {
             let Some(target) = target else {
                 cell.modifier |= dim;
                 continue;
             };
-            match dim_color_toward(u32_to_color(cell.fg), target) {
+            match dim_color_toward(u32_to_color(cell.fg), target, host_theme).or(dimmed_default_fg)
+            {
                 Some(fg) => cell.fg = color_to_u32(fg),
                 None => cell.modifier |= dim,
             }
-            if let Some(bg) = dim_color_toward(u32_to_color(cell.bg), target) {
+            if let Some(bg) = dim_color_toward(u32_to_color(cell.bg), target, host_theme) {
                 cell.bg = color_to_u32(bg);
             }
         }
@@ -3947,7 +3960,11 @@ impl HeadlessServer {
                         retained_fallback!("hyperlink_intersection");
                     }
                     if dim_unfocused && !info.is_focused {
-                        dim_dirty_patch(&mut patch, dim_target);
+                        dim_dirty_patch(
+                            &mut patch,
+                            dim_target,
+                            &self.app.state.host_terminal_theme,
+                        );
                     }
                     if !apply_terminal_dirty_patch(&mut frame, info.inner_rect, patch) {
                         retained_fallback!("patch_apply_failed");
@@ -4994,7 +5011,11 @@ mod tests {
             rows: vec![(0, vec![cell])],
         };
 
-        dim_dirty_patch(&mut patch, Some((0, 0, 0)));
+        dim_dirty_patch(
+            &mut patch,
+            Some((0, 0, 0)),
+            &crate::terminal_theme::TerminalTheme::default(),
+        );
 
         let cell = &patch.rows[0].1[0];
         assert_eq!(
@@ -5022,7 +5043,11 @@ mod tests {
             ],
         };
 
-        dim_dirty_patch(&mut patch, Some((0, 0, 0)));
+        dim_dirty_patch(
+            &mut patch,
+            Some((0, 0, 0)),
+            &crate::terminal_theme::TerminalTheme::default(),
+        );
         let dim = ratatui::style::Modifier::DIM.bits();
         for (_, row_cells) in &patch.rows {
             for cell in row_cells {
@@ -5035,7 +5060,11 @@ mod tests {
         let mut patch = crate::pane::TerminalDirtyPatch {
             rows: vec![(0, vec![test_cell(Color::Rgb(10, 20, 30), Color::Reset)])],
         };
-        dim_dirty_patch(&mut patch, None);
+        dim_dirty_patch(
+            &mut patch,
+            None,
+            &crate::terminal_theme::TerminalTheme::default(),
+        );
         assert_eq!(patch.rows[0].1[0].modifier & dim, dim);
     }
 
