@@ -2,8 +2,8 @@ use std::time::{Duration, Instant};
 
 use crate::api::schema::{
     AgentPromptParams, AgentPromptWaitOptions, AgentReadParams, AgentRenameParams,
-    AgentSendKeysParams, AgentStartParams, AgentTarget, AgentWaitParams, EmptyParams, Method,
-    PaneProcessInfoParams, PaneTarget, ReadFormat, ReadSource, Request,
+    AgentSendKeysParams, AgentStartParams, AgentTarget, AgentWaitParams, EmptyParams, ErrorBody,
+    ErrorResponse, Method, PaneProcessInfoParams, PaneTarget, ReadFormat, ReadSource, Request,
 };
 
 const AGENT_START_POLL_INTERVAL: Duration = Duration::from_millis(100);
@@ -118,7 +118,21 @@ fn agent_explain(args: &[String]) -> std::io::Result<i32> {
             eprintln!("herdr agent explain --file requires --agent LABEL");
             return Ok(2);
         };
-        let content = std::fs::read_to_string(path)?;
+        let content = match std::fs::read_to_string(&path) {
+            Ok(content) => content,
+            Err(err) => {
+                let response = ErrorResponse {
+                    id: "cli:agent:explain".into(),
+                    error: ErrorBody {
+                        code: "agent_explain_file_read_failed".into(),
+                        message: format!("failed to read agent explain file {path}: {err}"),
+                    },
+                };
+                let response = serde_json::to_string(&response).map_err(std::io::Error::other)?;
+                eprintln!("{response}");
+                return Ok(1);
+            }
+        };
         crate::detect::manifest::explain_to_json_value(&crate::detect::manifest::explain_for_label(
             &agent_label,
             &content,
@@ -596,6 +610,12 @@ fn wait_for_named_agent(
                     "agent_not_ready",
                     format!("agent {name} is blocked during startup and is not ready for prompts"),
                 ))),
+                Some("unknown")
+                    if expected_kind == "codex"
+                        && agent["interactive_ready"].as_bool() == Some(true) =>
+                {
+                    Some(Ok(agent.clone()))
+                }
                 Some("working" | "unknown") => None,
                 Some("idle" | "done") if agent["interactive_ready"].as_bool() == Some(true) => {
                     Some(Ok(agent.clone()))
@@ -820,7 +840,11 @@ fn agent_prompt(args: &[String]) -> std::io::Result<i32> {
         method: Method::AgentPrompt(AgentPromptParams {
             target: target.clone(),
             text: text.clone(),
-            wait: wait.then_some(AgentPromptWaitOptions { until, timeout_ms }),
+            wait: wait.then_some(AgentPromptWaitOptions {
+                until,
+                timeout_ms,
+                submission_deadline: None,
+            }),
         }),
     })?;
     super::print_response(&response)
