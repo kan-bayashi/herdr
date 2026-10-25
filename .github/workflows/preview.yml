@@ -18,7 +18,8 @@ concurrency:
 
 jobs:
   preflight:
-    if: github.repository == 'herdrdev/herdr' && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/preview-')
+    # Fork previews publish binary prereleases; metadata publication remains canonical-only.
+    if: (github.repository == 'herdrdev/herdr' || github.repository == 'kan-bayashi/herdr') && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/preview-')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -134,7 +135,7 @@ jobs:
 
   build:
     needs: preflight
-    if: github.repository == 'herdrdev/herdr' && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/preview-') && needs.preflight.outputs.should_publish == 'true'
+    if: (github.repository == 'herdrdev/herdr' || github.repository == 'kan-bayashi/herdr') && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/preview-') && needs.preflight.outputs.should_publish == 'true'
     permissions:
       contents: read
     strategy:
@@ -283,7 +284,7 @@ jobs:
 
   publish:
     needs: [preflight, build]
-    if: github.repository == 'herdrdev/herdr' && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/preview-') && needs.preflight.outputs.should_publish == 'true'
+    if: (github.repository == 'herdrdev/herdr' || github.repository == 'kan-bayashi/herdr') && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/preview-') && needs.preflight.outputs.should_publish == 'true'
     runs-on: ubuntu-latest
     concurrency:
       group: docs-publish-master
@@ -324,6 +325,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 scripts/preview.py notes \
+            --repo "$GITHUB_REPOSITORY" \
             --previous '${{ steps.previous-preview.outputs.range_base }}' \
             --commit '${{ needs.preflight.outputs.commit }}' \
             --build-id '${{ needs.preflight.outputs.build_id }}' \
@@ -410,6 +412,7 @@ jobs:
         run: gh release edit "$PREVIEW_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease
 
       - name: Update preview documentation and manifest
+        if: github.repository == 'herdrdev/herdr'
         run: |
           node scripts/docs/preview.mjs snapshot '${{ needs.preflight.outputs.commit }}'
           python3 scripts/preview.py manifest \
@@ -426,6 +429,7 @@ jobs:
             --retain 30
 
       - name: Commit preview publication
+        if: github.repository == 'herdrdev/herdr'
         env:
           KANGAL_GITHUB_TOKEN: ${{ secrets.KANGAL_GITHUB_TOKEN }}
         run: |
@@ -450,6 +454,7 @@ jobs:
           exit 1
 
       - name: Mark preview-released issues
+        if: github.repository == 'herdrdev/herdr'
         continue-on-error: true
         shell: bash
         env:

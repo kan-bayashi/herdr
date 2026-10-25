@@ -27,6 +27,36 @@ describe("official publishing workflow boundaries", () => {
     expect(preview.jobs.publish.needs).toContain("build");
   });
 
+  test("preview publishing is limited to the canonical repository and this fork", () => {
+    for (const name of ["preflight", "build", "publish"]) {
+      const allowed = new Function("github", "needs", "startsWith", `return ${preview.jobs[name].if};`);
+      const needs = { preflight: { outputs: { should_publish: "true" } } };
+      for (const repository of ["herdrdev/herdr", "kan-bayashi/herdr", "another/herdr"]) {
+        for (const event_name of ["push", "workflow_dispatch"]) {
+          for (const ref of ["refs/tags/preview-test", "refs/tags/v0.9.5", "refs/heads/master"]) {
+            expect(allowed({ repository, event_name, ref }, needs, (value: string, prefix: string) => value.startsWith(prefix)))
+              .toBe(repository !== "another/herdr" && event_name === "push" && ref === "refs/tags/preview-test");
+          }
+        }
+      }
+    }
+  });
+
+  test("fork previews publish binaries without canonical metadata or issue updates", () => {
+    const steps = preview.jobs.publish.steps;
+    for (const name of [
+      "Update preview documentation and manifest",
+      "Commit preview publication",
+      "Mark preview-released issues",
+    ]) {
+      expect(steps.find((step: any) => step.name === name).if).toBe("github.repository == 'herdrdev/herdr'");
+    }
+    expect(steps.find((step: any) => step.name === "Generate notes and checksums").run)
+      .toContain('--repo "$GITHUB_REPOSITORY"');
+    expect(steps.find((step: any) => step.name === "Publish preview prerelease").run)
+      .toContain('--repo "$GITHUB_REPOSITORY"');
+  });
+
   test("each publishing job rechecks both actors before using credentials", () => {
     for (const [workflow, names] of [
       [preview, ["preflight", "publish"]],
